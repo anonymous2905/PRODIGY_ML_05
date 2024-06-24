@@ -1,0 +1,92 @@
+# Step 1: Kaggle API Setup
+from google.colab import files
+files.upload()  # Upload your kaggle.json file
+
+# Move kaggle.json to the correct directory
+!mkdir -p ~/.kaggle
+!mv kaggle.json ~/.kaggle/
+!chmod 600 ~/.kaggle/kaggle.json
+
+# Step 2: Download and Unzip Dataset
+!kaggle datasets download -d kmader/food41
+!unzip food41.zip -d food-101
+
+# Import necessary libraries
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.layers import Dense, Flatten, Dropout
+from tensorflow.keras.models import Model
+import numpy as np
+from PIL import Image
+import os
+
+# Define the data directory
+data_dir = 'food-101/images'
+
+# Data Preparation
+train_datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+train_generator = train_datagen.flow_from_directory(
+    data_dir,
+    target_size=(224, 224),
+    batch_size=32,
+    class_mode='categorical',  # Ensure class_mode is 'categorical'
+    subset='training'
+)
+validation_generator = train_datagen.flow_from_directory(
+    data_dir,
+    target_size=(224, 224),
+    batch_size=32,
+    class_mode='categorical',  # Ensure class_mode is 'categorical'
+    subset='validation'
+)
+
+# Model Development
+base_model = ResNet50(weights='imagenet', include_top=False, input_shape=(224, 224, 3))
+x = base_model.output
+x = Flatten()(x)
+x = Dense(1024, activation='relu')(x)
+x = Dropout(0.5)(x)
+predictions = Dense(101, activation='softmax')(x)  # Ensure output layer matches the number of classes
+
+model = Model(inputs=base_model.input, outputs=predictions)
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Train the model
+history = model.fit(
+    train_generator,
+    epochs=10,
+    validation_data=validation_generator
+)
+
+# Save the trained model
+model.save('food_recognition_model.h5')
+
+# Calorie Estimation Mapping
+food_calories = {
+    'apple_pie': 237,
+    'baby_back_ribs': 474,
+    'baklava': 230,
+    # Add more food items and their calorie content here...
+}
+
+def get_calories(food_class):
+    return food_calories.get(food_class, "Calorie info not available")
+
+# Function to Predict Food Item and Estimate Calories
+def predict_and_estimate_calories(image_path):
+    if not os.path.exists(image_path):
+        raise FileNotFoundError(f"The image file '{image_path}' does not exist. Please check the path.")
+    
+    img = Image.open(image_path).resize((224, 224))
+    img_array = np.expand_dims(np.array(img) / 255.0, axis=0)
+    prediction = model.predict(img_array)
+    predicted_class_idx = np.argmax(prediction)
+    predicted_class = list(train_generator.class_indices.keys())[list(train_generator.class_indices.values()).index(predicted_class_idx)]
+    calories = get_calories(predicted_class)
+    return predicted_class, calories
+
+# Example usage
+image_path = '/content/food-101/images/apple_pie/1005649.jpg'  # Replace with the path to your image
+predicted_class, calories = predict_and_estimate_calories(image_path)
+print(f"The predicted food item is {predicted_class} with an estimated calorie content of {calories} kcal.")
